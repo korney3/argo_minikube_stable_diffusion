@@ -1,0 +1,178 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: stable-diffusion-inference-
+
+spec:
+  # number of pods that can be run in parallel,
+  # equals cluster_ram/docker_image_ram
+  parallelism: 2
+
+  imagePullSecrets:
+    - name: my-private-registry
+
+  arguments:
+    parameters:
+      - name: repo
+        value: https://github.com/fboulnois/stable-diffusion-docker.git
+      - name: image
+        value: korney3/my_private_repo:basic_version
+      - name: if_build_image
+        value: "false"
+      - name: prompts
+        value: "meditation is the biggest secret to meditation, in the style of surreal and dreamlike imagery, photobashing, dark indigo and silver, surrealistic dreamlike scenes, celestialpunk, mist, unconventional poses --ar 3:4 --v 5;A deer standing on a moon shaped object in the sky and dreaming of electric sheep, blurry and dreamy illustration, calm night. Digital illustration, Blurred and dreamlike illustration, Amédée Ozenfant, dreamlike illustration, in astral plane)) ), colorful plane surreal ethereal, in cosmic realm, in surreal dreamy landscape, light shadows, waves, multiple layers, Foreground, vista, fractal thunder Dan Mumford, Dan Mumford and Alex Gray style, psychedelic surreal art, surreal psychedelic design, fantasy art style, illusion psychedelic art, infinite psychedelic waves , inspired by Cyril Rolando, real ripple structure, psychedelic art style, psychedelic art, psychedelic illustration -- V6"
+
+
+  entrypoint: run-stable-diffusion
+
+  volumeClaimTemplates:
+    - metadata:
+        name: work
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 64Mi
+    - metadata:
+        name: shared-output
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 500Mi
+
+  volumes:
+    - name: docker-config
+      secret:
+        secretName: docker-config
+    - name: models
+      persistentVolumeClaim:
+        claimName: shared-models
+
+
+  templates:
+  - name: run-stable-diffusion
+    dag:
+      tasks:
+        - name: build-and-push-image
+          template: build-and-push-image
+          when: "{{workflow.parameters.if_build_image}}"
+        - name: generate-prompts-list
+          template: generate-prompts-list
+          dependencies: [build-and-push-image]
+          arguments:
+            parameters: [{name: prompts, value: "{{workflow.parameters.prompts}}"}]
+        - name: run-evaluation
+          template: run-evaluation
+          dependencies: [generate-prompts-list]
+          arguments:
+            parameters:
+              - name: prompt
+                value: "{{item}}"
+          withParam: "{{tasks.generate-prompts-list.outputs.result}}"
+        - name: collect-results
+          template: collect-results
+          dependencies: [ run-evaluation ]
+
+  - name: build-and-push-image
+    dag:
+      tasks:
+        - name: clone-repo
+          template: clone-repo
+          arguments:
+            parameters: [ { name: repo, value: "{{workflow.parameters.repo}}" } ]
+        - name: build-image
+          template: build-image
+          arguments:
+            parameters: [ { name: image, value: "{{workflow.parameters.image}}" } ]
+          dependencies: [ clone-repo ]
+
+# Templates for pipeline steps
+  - name: clone-repo
+    inputs:
+      parameters:
+        - name: repo
+    container:
+      image: alpine/git:v2.26.2
+      env:
+        - name: HUGGINGFACETOKEN # name of env var
+          valueFrom:
+            secretKeyRef:
+              name: hugging-face-token     # name of an existing k8s secret
+              key: key     # 'key' subcomponent of the secret
+      volumeMounts:
+        - name: work
+          mountPath: /work
+      workingDir: /git
+      command: [ sh, -c ]
+      args: ["git clone {{inputs.parameters.repo}} /work; 
+      touch /work/token.txt;
+      echo $HUGGINGFACETOKEN > /work/token.txt"]
+
+  - name: build-image
+    inputs:
+      parameters:
+        - name: image
+
+    container:
+      image: moby/buildkit:v0.9.3-rootless
+      volumeMounts:
+        - name: docker-config
+          mountPath: /.docker
+        - name: work
+          mountPath: /work
+      env:
+        - name: BUILDKITD_FLAGS
+          value: --oci-worker-no-process-sandbox
+        - name: DOCKER_CONFIG
+          value: /.docker
+      command: [ sh, -c ]
+      args: [ "ls -al /work;
+            buildctl-daemonless.sh build --frontend dockerfile.v0 
+            --local context=/work --local dockerfile=/work 
+            --output type=image,name=docker.io/{{inputs.parameters.image}},push=true" ]
+
+  - name: generate-prompts-list
+    inputs:
+      parameters:
+        - name: prompts
+    script:
+      image: python:alpine3.9
+      command: [ python ]
+      source: |
+        import json
+        import sys
+        prompts = "{{inputs.parameters.prompts}}".split(";")
+        json.dump(prompts, sys.stdout)
+
+  - name: run-evaluation
+    inputs:
+      parameters:
+          - name: prompt
+    script:
+      image: "{{workflow.parameters.image}}"
+      imagePullPolicy: Always
+      volumeMounts:
+        - name: shared-output
+          mountPath: /output_shared
+        - name: models
+          mountPath: /home/huggingface/.cache/huggingface
+      command: [ bash ]
+      source: |
+        docker-entrypoint.py --device cpu  --attention-slicing \
+        --skip --model 'dreamlike-art/dreamlike-photoreal-2.0' --samples 2 "{{inputs.parameters.prompt}}" ;
+        cp output/* /output_shared;
+
+
+  - name: collect-results
+    script:
+      image: python:alpine3.9
+      volumeMounts:
+        - name: shared-output
+          mountPath: /output_shared
+    outputs:
+      artifacts:
+        - name: output
+          path: /output_shared
+          s3:
+            key: "{{workflow.uid}}.tar.gz"

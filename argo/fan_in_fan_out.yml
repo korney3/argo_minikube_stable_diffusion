@@ -1,0 +1,101 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: fan-in-fan-out-
+
+spec:
+  arguments:
+    parameters:
+      - name: number_of_doodles
+        value: "5"
+      - name: input_phrase
+        value: "Hello world!"
+
+  entrypoint: generate-doodles
+
+  templates:
+  - name: generate-doodles
+    dag:
+      tasks:
+      - name: generate-doodles-list
+        template: generate-doodles-list
+        arguments:
+          parameters:
+          - name: number_of_doodles
+            value: "{{workflow.parameters.number_of_doodles}}"
+      - name: make-doodle
+        template: make-doodle
+        dependencies: [generate-doodles-list]
+        arguments:
+          parameters:
+            - name: doodle_name
+              value: "{{item}}"
+            - name: input_phrase
+              value: "{{workflow.parameters.input_phrase}}"
+        withParam: "{{tasks.generate-doodles-list.outputs.result}}"
+      - name: collect-doodles
+        template: collect-doodles
+        dependencies: [make-doodle]
+        arguments:
+          parameters:
+            - name: number_of_doodles
+              value: "{{workflow.parameters.number_of_doodles}}"
+            - name: doodles
+              value: "{{tasks.make-doodle.outputs.parameters}}"
+
+# Templates for pipeline steps
+  - name: generate-doodles-list
+    inputs:
+      parameters:
+        - name: number_of_doodles
+    script:
+      image: python:alpine3.9
+      command: [ python ]
+      source: |
+        import json
+        import sys
+        import random
+        
+        doodles_names = ["beavis.zen", "bong", "bud-frogs", "bunny", "cheese", "cower", "daemon", "dragon-and-cow", "dragon", "elephant-in-snake", "elephant", "eyes", "flaming-sheep", "ghostbusters", "head-in", "hellokitty", "kiss", "kitty", "koala", "kosh", "luke-koala", "meow", "milk", "moofasa", "moose", "mutilated", "ren", "satanic", "sheep", "skeleton", "small", "sodomized", "squirrel", "stegosaurus", "stimpy", "supermilker", "surgery", "telebears", "three-eyes", "turkey", "turtle", "tux", "udder", "vader-koala", "vader", "www"]
+        
+        number_of_doodles = int({{inputs.parameters.number_of_doodles}})
+        if number_of_doodles > len(doodles_names):
+          doodles = doodles_names
+        else:
+          doodles = random.sample(doodles_names, number_of_doodles)
+        json.dump(doodles, sys.stdout)
+
+  - name: make-doodle
+    inputs:
+      parameters:
+          - name: doodle_name
+          - name: input_phrase
+    script:
+      image: docker/whalesay
+      command: [ sh ]
+      source: |
+        touch doodle.txt
+        cowsay -f {{inputs.parameters.doodle_name}} {{inputs.parameters.input_phrase}} > doodle.txt
+    outputs:
+      parameters:
+        - name: doodle
+          valueFrom:
+            path: doodle.txt
+
+  - name: collect-doodles
+    inputs:
+      parameters:
+        - name: number_of_doodles
+        - name: doodles
+    script:
+      image: python:alpine3.9
+      command: [ python ]
+      source: |
+        import json
+        import sys
+        
+        number_of_doodles = int({{inputs.parameters.number_of_doodles}})
+        doodles = {{inputs.parameters.doodles}}
+        print(f"Obtained {number_of_doodles} doodles:")
+        for doodle in doodles:
+          print(f"{doodle['doodle']}")
