@@ -21,7 +21,7 @@ It is executed by running `argo -n argo submit argo/fan_in_fan_out.yml`.
 The code was tested on MacOs Intel with minikube v1.31.1 and kubectl v1.27.0.
 Stable diffusion pipeline **doesn't work on MacOs M1**, though minikube setup and fan-in-fan-out example work.
 
-To run fan-in/fan-out you'll need minimum of resources, but for stable diffusion you'll need at least 8GB of RAM and 4 CPU cores.
+To run fan-in/fan-out you'll need minimum of resources, but for stable diffusion you'll need at least 8GB of RAM.
 
 # Setup
 
