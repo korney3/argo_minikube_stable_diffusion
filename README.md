@@ -112,7 +112,7 @@ It takes 4 parameters as input:
 
 Before running check `parallelism` parameter in [parallel_inference.yml](argo/parallel_inference.yml). It is set to `2` by default,
 but it is better to set it according to your resources. For example, I was able to run it with `parallelism=2` on my MacOs Intel with 15GB of RAM and 4 CPU cores,
-though original repo stated that one docker image requires 8GB of RAM and 4 CPU cores, so maybe you'll need to set `parallelism=1` or `parallelism=1` to run it on your machine.
+though original repo stated that one docker image requires 8GB of RAM and 4 CPU cores, so maybe you'll need to set `parallelism=1` to run it on your machine.
 
 To run with default parameters, run `argo -n argo submit argo/parallel_inference.yml -p image="DOCKER_LOGIN/PRIVATE_REPO_NAME:TAG"`.
 
