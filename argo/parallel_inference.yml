@@ -16,7 +16,6 @@ spec:
       - name: repo
         value: https://github.com/fboulnois/stable-diffusion-docker.git
       - name: image
-        value: korney3/my_private_repo:basic_version
       - name: if_build_image
         value: "false"
       - name: prompts
