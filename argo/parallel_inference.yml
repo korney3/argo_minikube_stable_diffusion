@@ -19,8 +19,12 @@ spec:
       - name: if_build_image
         value: "false"
       - name: prompts
-        value: "meditation is the biggest secret to meditation, in the style of surreal and dreamlike imagery, photobashing, dark indigo and silver, surrealistic dreamlike scenes, celestialpunk, mist, unconventional poses --ar 3:4 --v 5;A deer standing on a moon shaped object in the sky and dreaming of electric sheep, blurry and dreamy illustration, calm night. Digital illustration, Blurred and dreamlike illustration, Amédée Ozenfant, dreamlike illustration, in astral plane)) ), colorful plane surreal ethereal, in cosmic realm, in surreal dreamy landscape, light shadows, waves, multiple layers, Foreground, vista, fractal thunder Dan Mumford, Dan Mumford and Alex Gray style, psychedelic surreal art, surreal psychedelic design, fantasy art style, illusion psychedelic art, infinite psychedelic waves , inspired by Cyril Rolando, real ripple structure, psychedelic art style, psychedelic art, psychedelic illustration -- V6"
-
+        value: "meditation is the biggest secret to meditation, in the style of surreal and dreamlike imagery, 
+        photobashing, dark indigo and silver, surrealistic dreamlike scenes, celestialpunk, mist, unconventional poses 
+        --ar 3:4 --v 5;a deer standing on a moon shaped object in the sky and dreaming of electric sheep, 
+        blurry and dreamy illustration, calm night, digital illustration, Blurred and dreamlike illustration, 
+        Amedee Ozenfant, dreamlike illustration, in cosmic realm, in surreal dreamy landscape, light shadows, waves, multiple layers, fractal thunder Dan Mumford, 
+        Dan Mumford and Alex Gray style,  inspired by Cyril Rolando, psychedelic illustration -- V6"
 
   entrypoint: run-stable-diffusion
 
@@ -32,13 +36,6 @@ spec:
         resources:
           requests:
             storage: 64Mi
-    - metadata:
-        name: shared-output
-      spec:
-        accessModes: [ "ReadWriteOnce" ]
-        resources:
-          requests:
-            storage: 500Mi
 
   volumes:
     - name: docker-config
@@ -142,6 +139,7 @@ spec:
         import json
         import sys
         prompts = "{{inputs.parameters.prompts}}".split(";")
+        prompts = [prompt.strip().lower().replace(".", ",") for prompt in prompts]
         json.dump(prompts, sys.stdout)
 
   - name: run-evaluation
@@ -152,26 +150,32 @@ spec:
       image: "{{workflow.parameters.image}}"
       imagePullPolicy: Always
       volumeMounts:
-        - name: shared-output
-          mountPath: /output_shared
         - name: models
           mountPath: /home/huggingface/.cache/huggingface
       command: [ bash ]
       source: |
         docker-entrypoint.py --device cpu  --attention-slicing \
         --skip --model 'dreamlike-art/dreamlike-photoreal-2.0' --samples 2 "{{inputs.parameters.prompt}}" ;
-        cp output/* /output_shared;
-
-
-  - name: collect-results
-    script:
-      image: python:alpine3.9
-      volumeMounts:
-        - name: shared-output
-          mountPath: /output_shared
     outputs:
       artifacts:
         - name: output
-          path: /output_shared
+          path: output
+          s3:
+            key: "{{workflow.name}}/{{pod.name}}.tar.gz"
+
+
+  - name: collect-results
+    inputs:
+      artifacts:
+        - name: results
+          path: /output
+          s3:
+            key: "{{workflow.name}}"
+    script:
+      image: python:alpine3.9
+    outputs:
+      artifacts:
+        - name: output
+          path: /output
           s3:
             key: "{{workflow.uid}}.tar.gz"
